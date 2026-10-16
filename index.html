@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Монитор цены</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: одна колонка — сводка цены, график, настройки и журнал событий */
+:root{
+  --bg:#f3f5f4; --panel:#ffffff; --fg:#14201b; --muted:#5d6b65; --line:#dbe2df;
+  --accent:#0f7b5f; --up:#13895f; --down:#c4382b; --warn:#b7791f;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  --sans:"IBM Plex Sans",system-ui,"Segoe UI",sans-serif;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f1513; --panel:#16201c; --fg:#e4ece8; --muted:#8c9b95; --line:#26332e;
+  --accent:#3fc59a; --up:#3fc59a; --down:#f0705f; --warn:#e3a94a; color-scheme:dark;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 var(--sans)}
+main{max-width:960px;margin:0 auto;padding:24px 16px 48px;display:grid;gap:16px}
+header{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px}
+h1{font-size:20px;margin:0;font-weight:600}
+.src{color:var(--muted);font-size:13px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+.hero{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-end;justify-content:space-between}
+.price{font:600 44px/1 var(--mono);font-variant-numeric:tabular-nums}
+.sym{font:500 13px var(--mono);letter-spacing:.06em;color:var(--muted);text-transform:uppercase}
+.stats{display:grid;grid-template-columns:repeat(4,auto);gap:4px 24px;font-size:13px}
+.stats dt{color:var(--muted)} .stats dd{margin:0;font:600 14px var(--mono);font-variant-numeric:tabular-nums}
+.up{color:var(--up)} .down{color:var(--down)}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:2px 10px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.pill.live .dot{background:var(--up)} .pill.err .dot{background:var(--down)} .pill.err{color:var(--down)}
+canvas{width:100%;height:260px;display:block}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+label{display:grid;gap:4px;font-size:12px;color:var(--muted)}
+input,select,button{font:14px var(--sans);padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+input{font-family:var(--mono)}
+button{cursor:pointer;background:var(--accent);color:#fff;border-color:var(--accent);font-weight:500}
+button.ghost{background:transparent;color:var(--fg);border-color:var(--line)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 10px;font-weight:600}
+.log{max-height:240px;overflow:auto;font:13px var(--mono);display:grid;gap:2px}
+.log div{display:flex;gap:12px;padding:4px 0;border-bottom:1px solid var(--line)}
+.log time{color:var(--muted);flex:none}
+@media (max-width:560px){.stats{grid-template-columns:repeat(2,auto)}.price{font-size:34px}}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Монитор цены</h1>
+    <span class="src">Источник: Binance public API · <span id="status" class="pill"><span class="dot"></span><span id="statusText">ожидание</span></span></span>
+  </header>
+
+  <section class="panel hero">
+    <div>
+      <div class="sym" id="symLabel">BTCUSDT</div>
+      <div class="price" id="price">—</div>
+    </div>
+    <dl class="stats">
+      <dt>Изм. 24ч</dt><dt>Макс 24ч</dt><dt>Мин 24ч</dt><dt>Обновлено</dt>
+      <dd id="chg">—</dd><dd id="hi">—</dd><dd id="lo">—</dd><dd id="upd">—</dd>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <h2>История (локальная, <span id="count">0</span> точек)</h2>
+    <canvas id="chart"></canvas>
+  </section>
+
+  <section class="panel">
+    <h2>Настройки и оповещения</h2>
+    <div class="grid">
+      <label for="symbol">Пара (тикер Binance)<input id="symbol" value="BTCUSDT"></label>
+      <label for="interval">Интервал опроса
+        <select id="interval"><option value="5">5 сек</option><option value="15" selected>15 сек</option><option value="60">1 мин</option><option value="300">5 мин</option></select>
+      </label>
+      <label for="above">Оповестить, если выше<input id="above" type="number" step="any" placeholder="напр. 120000"></label>
+      <label for="below">Оповестить, если ниже<input id="below" type="number" step="any" placeholder="напр. 90000"></label>
+      <label for="jump">Резкое изменение, % за опрос<input id="jump" type="number" step="any" value="1"></label>
+    </div>
+    <div class="row">
+      <button id="apply">Применить</button>
+      <button class="ghost" id="notify">Включить уведомления браузера</button>
+      <button class="ghost" id="csv">Скачать CSV</button>
+      <button class="ghost" id="clear">Очистить историю</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Журнал событий</h2>
+    <div class="log" id="log"></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const API = "https://api.binance.com/api/v3/ticker/24hr?symbol=";
+const MAX_POINTS = 2000;
+let cfg = load("pm_cfg", {symbol:"BTCUSDT", interval:15, above:"", below:"", jump:1});
+let hist = load("pm_hist_" + cfg.symbol, []);
+let timer = null, lastPrice = null, armedAbove = true, armedBelow = true;
+
+function load(k, d){ try{ return JSON.parse(localStorage.getItem(k)) ?? d }catch{ return d } }
+function save(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)) }catch{} }
+const fmt = n => n == null ? "—" : Number(n).toLocaleString("ru-RU", {maximumFractionDigits: n < 1 ? 6 : 2});
+const tm = t => new Date(t).toLocaleTimeString("ru-RU");
+
+function log(msg, cls=""){
+  const d = document.createElement("div");
+  d.innerHTML = `<time>${tm(Date.now())}</time><span class="${cls}"></span>`;
+  d.lastChild.textContent = msg;
+  $("log").prepend(d);
+  while ($("log").children.length > 200) $("log").lastChild.remove();
+}
+function alertUser(msg){
+  log(msg, "down");
+  document.title = "🔔 " + msg;
+  if ("Notification" in window && Notification.permission === "granted") new Notification("Монитор цены", {body: msg});
+}
+function setStatus(ok, text){
+  $("status").className = "pill " + (ok ? "live" : "err");
+  $("statusText").textContent = text;
+}
+
+async function tick(){
+  try{
+    const r = await fetch(API + encodeURIComponent(cfg.symbol));
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.msg || ("HTTP " + r.status));
+    const p = parseFloat(j.lastPrice), now = Date.now();
+    $("price").textContent = fmt(p);
+    const c = parseFloat(j.priceChangePercent);
+    $("chg").textContent = (c > 0 ? "+" : "") + c.toFixed(2) + "%";
+    $("chg").className = c >= 0 ? "up" : "down";
+    $("hi").textContent = fmt(j.highPrice); $("lo").textContent = fmt(j.lowPrice);
+    $("upd").textContent = tm(now);
+    setStatus(true, "онлайн");
+    check(p);
+    hist.push([now, p]); if (hist.length > MAX_POINTS) hist.shift();
+    save("pm_hist_" + cfg.symbol, hist);
+    lastPrice = p; draw();
+  }catch(e){
+    setStatus(false, "ошибка");
+    log("Не удалось получить цену: " + e.message + ". Проверьте тикер и интернет.", "down");
+  }
+}
+
+function check(p){
+  const a = parseFloat(cfg.above), b = parseFloat(cfg.below), jmp = parseFloat(cfg.jump);
+  if (!isNaN(a)) { if (p > a && armedAbove){ alertUser(`${cfg.symbol} выше ${fmt(a)}: ${fmt(p)}`); armedAbove = false } else if (p <= a) armedAbove = true }
+  if (!isNaN(b)) { if (p < b && armedBelow){ alertUser(`${cfg.symbol} ниже ${fmt(b)}: ${fmt(p)}`); armedBelow = false } else if (p >= b) armedBelow = true }
+  if (lastPrice && !isNaN(jmp) && jmp > 0){
+    const d = (p - lastPrice) / lastPrice * 100;
+    if (Math.abs(d) >= jmp) alertUser(`${cfg.symbol} резко ${d > 0 ? "вырос" : "упал"} на ${d.toFixed(2)}%: ${fmt(p)}`);
+  }
+}
+
+function draw(){
+  const cv = $("chart"), dpr = devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext("2d"); g.scale(dpr, dpr); g.clearRect(0,0,W,H);
+  $("count").textContent = hist.length;
+  const css = getComputedStyle(document.documentElement), col = v => css.getPropertyValue(v).trim();
+  g.font = "11px " + col("--mono"); g.fillStyle = col("--muted");
+  if (hist.length < 2){ g.fillText("Данные появятся после нескольких опросов…", 8, H/2); return }
+  const L = 8, R = 72, T = 10, B = 22;
+  const ps = hist.map(h => h[1]); let mn = Math.min(...ps), mx = Math.max(...ps);
+  if (mn === mx){ mn *= .999; mx *= 1.001 }
+  const t0 = hist[0][0], t1 = hist.at(-1)[0];
+  const x = t => L + (t - t0) / (t1 - t0 || 1) * (W - L - R);
+  const y = v => T + (1 - (v - mn) / (mx - mn)) * (H - T - B);
+  g.strokeStyle = col("--line"); g.lineWidth = 1;
+  for (let i = 0; i <= 4; i++){
+    const v = mn + (mx - mn) * i / 4, yy = Math.round(y(v)) + .5;
+    g.beginPath(); g.moveTo(L, yy); g.lineTo(W - R, yy); g.stroke();
+    g.fillText(fmt(v), W - R + 6, yy + 4);
+  }
+  g.fillText(tm(t0), L, H - 6); const s = tm(t1); g.fillText(s, W - R - g.measureText(s).width, H - 6);
+  for (const [lv, c] of [[cfg.above, "--warn"], [cfg.below, "--warn"]]){
+    const v = parseFloat(lv); if (isNaN(v) || v < mn || v > mx) continue;
+    g.setLineDash([4,4]); g.strokeStyle = col(c); g.beginPath(); g.moveTo(L, y(v)); g.lineTo(W - R, y(v)); g.stroke(); g.setLineDash([]);
+  }
+  const up = ps.at(-1) >= ps[0], line = col(up ? "--up" : "--down");
+  g.beginPath(); hist.forEach(([t,v], i) => i ? g.lineTo(x(t), y(v)) : g.moveTo(x(t), y(v)));
+  g.strokeStyle = line; g.lineWidth = 2; g.stroke();
+  g.lineTo(x(t1), H - B); g.lineTo(x(t0), H - B); g.closePath();
+  g.globalAlpha = .12; g.fillStyle = line; g.fill(); g.globalAlpha = 1;
+  g.beginPath(); g.arc(x(t1), y(ps.at(-1)), 4, 0, 7); g.fillStyle = line; g.fill();
+}
+
+function start(){
+  clearInterval(timer);
+  ["symbol","interval","above","below","jump"].forEach(k => $(k).value = cfg[k]);
+  $("symLabel").textContent = cfg.symbol;
+  hist = load("pm_hist_" + cfg.symbol, []);
+  lastPrice = null; armedAbove = armedBelow = true;
+  draw(); tick();
+  timer = setInterval(tick, cfg.interval * 1000);
+  log(`Мониторинг ${cfg.symbol}, опрос каждые ${cfg.interval} сек`);
+}
+
+$("apply").onclick = () => {
+  cfg = {symbol: $("symbol").value.trim().toUpperCase() || "BTCUSDT", interval: +$("interval").value,
+         above: $("above").value, below: $("below").value, jump: $("jump").value};
+  save("pm_cfg", cfg); document.title = "Монитор цены"; start();
+};
+$("notify").onclick = async () => {
+  if (!("Notification" in window)) return log("Браузер не поддерживает уведомления");
+  const r = await Notification.requestPermission();
+  log(r === "granted" ? "Уведомления включены" : "Уведомления запрещены в браузере");
+};
+$("csv").onclick = () => {
+  const rows = ["time,price", ...hist.map(([t,p]) => new Date(t).toISOString() + "," + p)].join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([rows], {type:"text/csv"}));
+  a.download = cfg.symbol + "_history.csv"; a.click();
+};
+$("clear").onclick = () => { hist = []; save("pm_hist_" + cfg.symbol, hist); draw(); log("История очищена") };
+addEventListener("resize", draw);
+start();
+</script>
+</body>
+</html>
